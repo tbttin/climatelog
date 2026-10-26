@@ -2,6 +2,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h>
+#include "sensor.h"
 
 static volatile sig_atomic_t keep_running = 1;
 
@@ -36,8 +38,12 @@ main() {
 		return EXIT_FAILURE;
 	}
 	init_signal_handlers();
+
+	srand(time(nullptr));
+	struct climate_log log;
 	while (keep_running) {
-	       	printf("Hello World!\n");
+		set_climate_log(&log);
+		climate_log_show(&log);
 		sleep(1);
 	}
 	printf("Terminated!\n");

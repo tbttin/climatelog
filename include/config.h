@@ -1,0 +1,14 @@
+#ifndef _CONFIG_H_INCLUDED_
+#define _CONFIG_H_INCLUDED_
+
+enum {
+	DEVICE_ID_BUF_SIZE = 32,
+	TEMP_MIN = 15,
+	TEMP_MAX = 35,
+	HUMID_MIN = 40,
+	HUMID_MAX = 90,
+	TIMESTAMP_BUF_SIZE = 32
+};
+
+#endif /* _CONFIG_H_INCLUDED_ */
+
