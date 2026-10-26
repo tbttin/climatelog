@@ -37,7 +37,6 @@ main() {
 		fprintf(stderr, "Fatal error: Failed to configure OS signal traps.\n");
 		return EXIT_FAILURE;
 	}
-	init_signal_handlers();
 
 	srand(time(nullptr));
 	struct climate_log log;
@@ -46,7 +45,6 @@ main() {
 		climate_log_show(&log);
 		sleep(1);
 	}
-	printf("Terminated!\n");
 
 	return EXIT_SUCCESS;
 }

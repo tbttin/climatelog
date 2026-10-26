@@ -1,8 +1,8 @@
-#ifndef _CONFIG_H_INCLUDED_
-#define _CONFIG_H_INCLUDED_
+#ifndef CONFIG_H_INCLUDED
+#define CONFIG_H_INCLUDED
 
 enum {
-	DEVICE_ID_BUF_SIZE = 32,
+	/* DEVICE_ID_BUF_SIZE = 32, */
 	TEMP_MIN = 15,
 	TEMP_MAX = 35,
 	HUMID_MIN = 40,
@@ -10,5 +10,5 @@ enum {
 	TIMESTAMP_BUF_SIZE = 32
 };
 
-#endif /* _CONFIG_H_INCLUDED_ */
+#endif /* CONFIG_H_INCLUDED */
 

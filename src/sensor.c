@@ -5,7 +5,7 @@
 #include "config.h"
 #include "sensor.h"
 
-static char device_ids[][DEVICE_ID_BUF_SIZE] = {
+static const char *device_ids[] = {
 	"ZONE_A_DTH22",
 	"ZONE_B_SHT31",
 	"ZONE_C_DTH22"
@@ -13,9 +13,9 @@ static char device_ids[][DEVICE_ID_BUF_SIZE] = {
 
 static const int ACTIVE_DEVICE_COUNT = sizeof(device_ids)/sizeof(device_ids[0]);
 
-char *
+const char *
 gen_device_id(long rand_val) {
-	int i = rand_val % ACTIVE_DEVICE_COUNT; /* From 0 to ACTIVE_DEVICE_COUNT inclusive */
+	int i = rand_val % ACTIVE_DEVICE_COUNT; /* From 0 to ACTIVE_DEVICE_COUNT - 1 inclusive */
 	return device_ids[i];
 }
 
@@ -24,9 +24,9 @@ gen_temp(struct tm *now) {
 	long secs_of_day = now->tm_sec + (60 * now->tm_min) + (3600 * now->tm_hour);
 	/* Use -cosine() to simulate real life temperature throughout the day
 	 * cos(0) = 1 */
-	double mid_point = (TEMP_MAX + TEMP_MIN) / 2;
-	double swing_amplitude = (TEMP_MAX - TEMP_MIN) / 2;
-	double swing = swing_amplitude * cos(secs_of_day * (2 * M_PI / 86400));
+	double mid_point = (TEMP_MAX + TEMP_MIN) / 2.0;
+	double swing_amplitude = (TEMP_MAX - TEMP_MIN) / 2.0;
+	double swing = swing_amplitude * cos(secs_of_day * (2.0 * M_PI / 86400));
 	return mid_point - swing;
 }
 
@@ -40,10 +40,7 @@ gen_humid(double temp) {
 bool
 gen_sensor_status(long rand_val) { 
 	double x = (double) rand_val / RAND_MAX;
-	if (x <= 0.01) { /* 1% the sensor will fail */
-		return 1;
-	}
-	return 0;
+	return (x <= 0.01); /* 1% the sensor will fail */
 }
  
 void
