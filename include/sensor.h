@@ -3,14 +3,14 @@
 #include "config.h"
 
 struct climate_log {
-	const char *device_id;
 	double temp;
 	double humid;
-	const char timestamp[TIMESTAMP_BUF_SIZE];
+	char timestamp[TIMESTAMP_BUF_SIZE];
+	const char *device_id;
 	bool sensor_status;
 };
 
-void set_climate_log(struct climate_log *log);
+void climate_log_rand(struct climate_log *log);
 
 void climate_log_show(const struct climate_log *log);
 
