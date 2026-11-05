@@ -1,0 +1,23 @@
+[Unit]
+Description=IoT Climate Data Logger Simulator
+After=network.target
+
+[Service]
+# Type=simple means the service starts immediately as soon as the binary executes
+Type=simple
+
+# The exact absolute path where 'make install' places your binary
+ExecStart=/usr/local/bin/climatelog
+
+# Restart configuration: if the program stops or crashes, turn it back on automatically
+Restart=always
+RestartSec=5
+
+# Security layer: Run the app as a standard root/admin system manager
+User=root
+
+[Install]
+# This line tells Linux to launch this service automatically during the system boot sequence
+WantedBy=multi-user.target
+
+# vi: ft=systemd
