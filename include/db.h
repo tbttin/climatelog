@@ -1,15 +1,23 @@
 #ifndef DB_H_INCLUDED
 #define DB_H_INCLUDED
 
-struct sqlite3* init_sqlite_db();
+#include <sqlite3.h>
+#include "sensor.h"
 
-struct sqlite3_stmt * prepare_sqlite_insert_stmt(struct sqlite3 *pdb);
+struct db_context;
 
-int get_db_batch_limit();
+struct db_context* db_init();
+void db_close(struct db_context *ctx);
 
-void bind_climate_log_batch(struct sqlite3 *pdb, struct sqlite3_stmt *stmt, const struct climate_log *log);
+void db_register_device_if_new(struct db_context *ctx, int device_id);
+void db_write_log_batch(struct db_context *ctx, const struct climate_log *log);
+int db_get_batch_limit();
+char * db_get_location(struct db_context *ctx, int device_id, char *dest_buf, size_t buf_len);
+int climate_log_serialize(struct db_context *ctx, const struct climate_log *log, char *dest_buf, size_t buf_len);
+void db_begin_transaction(struct db_context *ctx);
+void db_end_transaction(struct db_context *ctx);
 
-void close_sqlite3_db(struct sqlite3 *pdb);
+void db_purge_old_logs(struct db_context *ctx);
+void db_run_maintenance(struct db_context *ctx);
 
-#endif /* DB_H_INCLUDED */
-
+#endif
