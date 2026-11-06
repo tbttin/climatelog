@@ -12,7 +12,7 @@ static void handle_shutdown(int sig) { (void)sig; keep_running = 0; }
 static void
 ui_show_log(struct db_context *db, const struct climate_log *log) {
 	char buf[128];
-	climate_log_serialize(db, log, buf, 128);
+	climate_log_serialize(db, log, buf, sizeof buf);
 	printf("%s\n", buf);
 }
 
@@ -30,17 +30,19 @@ main(void) {
 
 	int batch_count = 0;
 	db_begin_transaction(db);
-
 	while (keep_running) {
 		struct climate_log log;
 		gen_climate_log(&log);
 
-		db_register_device_if_new(db, log.device_id);
+		if (db_register_device_if_new(db, log.device_id)) {
+			fprintf(stderr, "Skipping log processing cycle for problematic device ID %d.\n", log.device_id);
+			continue;
+		}
 		db_write_log_batch(db, &log);
 		ui_show_log(db, &log);
 
 		if (++batch_count >= db_get_batch_limit()) {
-			printf("End transaction, executing a %d-row flush to disk...\n", batch_count);
+			printf("End transaction, start insertion - executing a %d-row flush to disk...\n", batch_count);
 			db_end_transaction(db);
 
 			db_purge_old_logs(db);

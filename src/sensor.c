@@ -9,11 +9,11 @@ gen_climate_log(struct climate_log *log) {
 	struct tm *now = localtime(&now_t);
 	long rand_val = rand();
 
-	log->device_id = rand_val % RAND_MAX_DEVICE;
+	log->device_id = (rand_val % RAND_MAX_DEVICE) + 1; /* 1 - RAND_MAX_DEVICE inclusive */
 	log->timestamp = now_t;
-	log->sensor_failed = (((double)rand_val / RAND_MAX) <= 0.01);
+	log->sensor_failed = (((double)rand_val / RAND_MAX) <= 0.01); /* 1 percent the sensor will failed */
 
-	// Simulate daily temperature swing via cosine curve
+	// Simulate daily temperature swing via cosine curve (peak at noon, lowest at midnight)
 	long secs_of_day = now->tm_sec + (60 * now->tm_min) + (3600 * now->tm_hour);
 	double mid_point = (TEMP_MAX + TEMP_MIN) / 2.0;
 	double swing = ((TEMP_MAX - TEMP_MIN) / 2.0) * cos(secs_of_day * (2.0 * M_PI / 86400));
