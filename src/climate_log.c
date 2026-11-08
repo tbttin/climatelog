@@ -13,13 +13,16 @@ static void
 ui_show_log(struct db_context *db, const struct climate_log *log) {
 	char buf[128];
 	climate_log_serialize(db, log, buf, sizeof buf);
-	printf("%s\n", buf);
+	printf("%s", buf);
 }
 
 int
 main(void) {
 	struct sigaction sa = { .sa_handler = handle_shutdown };
-	if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) return EXIT_FAILURE;
+	if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
+		fprintf(stderr, "Can NOT register system handler\n");
+		return EXIT_FAILURE;
+	}
 
 	srand(time(NULL));
 	struct db_context *db = db_init();
@@ -29,32 +32,43 @@ main(void) {
 	}
 
 	int batch_count = 0;
-	db_begin_transaction(db);
+	bool in_transaction = false;
 	while (keep_running) {
+		if (!in_transaction) {
+			db_begin_transaction(db);
+			in_transaction = true;
+		}
+
 		struct climate_log log;
 		gen_climate_log(&log);
-
-		if (db_register_device_if_new(db, log.device_id)) {
+		if (db_register_device_if_new(db, log.device_id) == DB_ERR_INVALID_INDEX) {
 			fprintf(stderr, "Skipping log processing cycle for problematic device ID %d.\n", log.device_id);
 			continue;
 		}
+
 		db_write_log_batch(db, &log);
 		ui_show_log(db, &log);
 
 		if (++batch_count >= db_get_batch_limit()) {
-			printf("End transaction, start insertion - executing a %d-row flush to disk...\n", batch_count);
-			db_end_transaction(db);
+			if (in_transaction) {
+				printf("End transaction, start insertion - executing a %d-row flush to disk...\n", batch_count);
+				db_end_transaction(db);
+				in_transaction = false;
+			}
 
 			db_purge_old_logs(db);
-			db_run_maintenance(db);
 
-			db_begin_transaction(db);
 			batch_count = 0;
 		}
 		sleep(1);
 	}
 
-	if (batch_count > 0) db_end_transaction(db);
+	if (batch_count > 0 && in_transaction) {
+		db_end_transaction(db);
+		fprintf(stdout, "Terminate on signal. %d-device flushed to the disk\n", batch_count);
+	} else if (in_transaction) {
+		db_rollback(db);
+	}
 
 	db_close(db);
 	printf("Clean exit complete.\n");
