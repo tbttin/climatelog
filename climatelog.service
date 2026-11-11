@@ -9,12 +9,16 @@ ExecStart=/usr/local/bin/climatelog
 # Restart configuration: if the program stops or crashes, turn it back on automatically
 Restart=always
 RestartSec=5
-# Run witn least privilege
+# Run with least privilege
 User=climatelog
 Group=climatelog
-# Automatically creates and owns /var/lib/climatelog
 StateDirectory=climatelog
 StateDirectoryMode=0750
+# Security sandboxing
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
 
 [Install]
 # This line tells Linux to launch this service automatically during the system boot sequence
