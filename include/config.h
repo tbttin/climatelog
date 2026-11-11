@@ -10,7 +10,9 @@
 
 /* Database settings */
 #define SQLITE_TIMEOUT_BUSY 2000
+#ifndef CLIMATELOG_DB_FILE
 #define CLIMATELOG_DB_FILE "/var/lib/climatelog/climatelog.db"
+#endif
 
 #define DB_DEVICE_MAX_INIT 20
 #define DB_DEVICE_MAX_CEILING 50

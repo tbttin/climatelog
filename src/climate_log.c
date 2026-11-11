@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
 #include "sensor.h"
 #include "db.h"
 
@@ -9,25 +10,20 @@ static volatile sig_atomic_t keep_running = 1;
 
 static void handle_shutdown(int sig) { (void)sig; keep_running = 0; }
 
-static void
-ui_show_log(struct db_context *db, const struct climate_log *log) {
-	char buf[128];
-	climate_log_serialize(db, log, buf, sizeof buf);
-	printf("%s", buf);
-}
-
 int
 main(void) {
+	/* setlinebuf(stdout); */
+
 	struct sigaction sa = { .sa_handler = handle_shutdown };
 	if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
-		fprintf(stderr, "Can NOT register system handler\n");
+		LOG_ERR("Can NOT register system signal handler");
 		return EXIT_FAILURE;
 	}
 
 	srand(time(NULL));
 	struct db_context *db = db_init();
 	if (!db) {
-		fprintf(stderr, "Fatal error: Failed to init database.\n");
+		LOG_ERR("Fatal error: Failed to init database");
 		return EXIT_FAILURE;
 	}
 
@@ -41,17 +37,25 @@ main(void) {
 
 		struct climate_log log;
 		gen_climate_log(&log);
-		if (db_register_device_if_new(db, log.device_id) == DB_ERR_INVALID_INDEX) {
-			fprintf(stderr, "Skipping log processing cycle for problematic device ID %d.\n", log.device_id);
+		const char *dev_loc = NULL;
+		db_status_t rs = db_register_device_if_new(db, log.device_id);
+		if (rs == DB_ERR_ID_EXCEEDS_CEILING) {
+			LOG_WARN("Skipping log processing cycle for problematic device id=%d", log.device_id);
 			continue;
+		} else if (rs == DB_SUCCESS) {
+			db_get_device_loc(db, &dev_loc, log.device_id);
+			LOG_INFO("New device regisdered (id=%d dev_loc=%s)", log.device_id, dev_loc);
 		}
 
+		if (log.sensor_failed) {
+			db_get_device_loc(db, &dev_loc, log.device_id);
+			LOG_WARN("Sensor fault: dev=%02d dev_loc=%-6s temp=%4.1fC humid=%4.1f%%", log.device_id, dev_loc, log.temp, log.humid);
+		}
 		db_write_log_batch(db, &log);
-		ui_show_log(db, &log);
 
 		if (++batch_count >= db_get_batch_limit()) {
 			if (in_transaction) {
-				printf("End transaction, start insertion - executing a %d-row flush to disk...\n", batch_count);
+				LOG_INFO("End transaction, start insertion - executing a %d-row flush to disk...", batch_count);
 				db_end_transaction(db);
 				in_transaction = false;
 			}
@@ -60,17 +64,18 @@ main(void) {
 
 			batch_count = 0;
 		}
-		sleep(1);
+		struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+		nanosleep(&ts, NULL);
 	}
 
 	if (batch_count > 0 && in_transaction) {
 		db_end_transaction(db);
-		fprintf(stdout, "Terminate on signal. %d-device flushed to the disk\n", batch_count);
+		LOG_INFO("Terminated on signal. %d-device pack flushed to the disk", batch_count);
 	} else if (in_transaction) {
 		db_rollback(db);
 	}
 
 	db_close(db);
-	printf("Clean exit complete.\n");
+	LOG_INFO("Clean exit complete");
 	return EXIT_SUCCESS;
 }
