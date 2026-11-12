@@ -6,9 +6,6 @@
 #include "db.h"
 #include "config.h"
 
-/* #define LOG_ERR(fmt, ...) fprintf(stderr, "[ERROR] %s:%d (%s): " fmt "\n", \ */
-/* 				  __FILE__, __LINE__, __func__, ##__VA_ARGS__) */
-
 struct device {
 	int hardware_id;
 	char location[LOCATION_NAME_BUF_MAX];
@@ -35,59 +32,63 @@ static void db_fatal_panic(struct db_context *ctx, const char *mssg);
 
 struct db_context *
 db_init() {
-	// Step 1: Allocate context structure cleanly using calloc (all inner pointers start as NULL)
+	/* Step 1: Allocate context structure cleanly using calloc (all inner pointers start as NULL) */
 	struct db_context *ctx = calloc(1, sizeof(*ctx));
 	if (!ctx) {
-		LOG_ERR("Can NOT allocate memory for database context");
+		LOG_ERR("Can NOT allocate database context memory");
 		goto error_cleanup;
-		return NULL;
 	}
 
-	// Step 2: Open SQLite connection
+	/* Step 2: Open SQLite connection */
 	const char *db_file = getenv("CLIMATELOG_DB_FILE") ? getenv("CLIMATELOG_DB_FILE") : CLIMATELOG_DB_FILE;
 	int rc = sqlite3_open_v2(db_file, &ctx->handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
 	if (rc != SQLITE_OK) {
 		LOG_ERR("Can't open database file \"%s\". Error code: %d, %s", db_file, sqlite3_extended_errcode(ctx->handle), sqlite3_errmsg(ctx->handle));
-		goto error_cleanup; // Jump directly to cleanup path
+		goto error_cleanup; /* Jump directly to cleanup path */
 	}
 
-	// Step 3: Allocate the tracking array
+	/* Step 3: Allocate the tracking array */
 	ctx->device_max = ctx->device_count = 0;
 	if (ensure_device_capacity(ctx, DB_DEVICE_MAX_INIT) != DB_SUCCESS) {
 		goto error_cleanup;
 	}
-	/* ctx->devices[0].hardware_id = 0; */
 
-	// Step 4: Schema execution (Using cascading checks)
-	if (sqlite3_exec(ctx->handle, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL) != SQLITE_OK ||
-	    sqlite3_exec(ctx->handle, "PRAGMA auto_vacuum = FULL;", NULL, NULL, NULL) != SQLITE_OK ||
-	    sqlite3_busy_timeout(ctx->handle, SQLITE_TIMEOUT_BUSY) != SQLITE_OK ||
+	/* SQLite configurations */
+	if (sqlite3_exec(ctx->handle, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL) != SQLITE_OK ||  /* Write-Ahead logging, useful for concurrent reads */
+	    sqlite3_busy_timeout(ctx->handle, SQLITE_TIMEOUT_BUSY) != SQLITE_OK) {
+		LOG_ERR("Init Error: Database cofig failed");
+		goto error_cleanup;
+	}
+
+	/* Step 4: Schema execution (Using cascading checks) */
+	if (sqlite3_exec(ctx->handle, "CREATE TABLE IF NOT EXISTS climate_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, temperature REAL NOT NULL, humidity REAL NOT NULL, timestamp INTEGER NOT NULL, sensor_status INTEGER NOT NULL);", NULL, NULL, NULL) != SQLITE_OK ||
 	    sqlite3_exec(ctx->handle, "CREATE TABLE IF NOT EXISTS devices (hardware_id INTEGER PRIMARY KEY, location TEXT NOT NULL);", NULL, NULL, NULL) != SQLITE_OK ||
-	    sqlite3_exec(ctx->handle, "CREATE TABLE IF NOT EXISTS climate_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id INTEGER NOT NULL, temperature REAL NOT NULL, humidity REAL NOT NULL, timestamp INTEGER NOT NULL, sensor_status INTEGER NOT NULL);", NULL, NULL, NULL) != SQLITE_OK ||
 	    sqlite3_exec(ctx->handle, "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON climate_logs (timestamp);", NULL, NULL, NULL) != SQLITE_OK) {
 		LOG_ERR("Init Error: Database schema setup failed");
 		goto error_cleanup;
 	}
 
-	// Step 5: Compile Prepared Statements
+	/* Step 5: Compile Prepared Statements */
 	if (sqlite3_prepare_v3(ctx->handle, "INSERT INTO devices VALUES (?, ?);", -1, SQLITE_PREPARE_PERSISTENT, &ctx->insert_device_stmt, NULL) != SQLITE_OK ||
 	    sqlite3_prepare_v3(ctx->handle, "INSERT INTO climate_logs (device_id, temperature, humidity, timestamp, sensor_status) VALUES (?, ROUND(?, 1), ROUND(?, 1), ?, ?);", -1, SQLITE_PREPARE_PERSISTENT, &ctx->insert_log_stmt, NULL) != SQLITE_OK) {
 		LOG_ERR("Init Error: Failed to compile prepared statements");
 		goto error_cleanup;
 	}
 
-	// Step 6: Load historical data from disk
+	LOG_INFO("Connect to %s successfully, batch size: %d, retention time: %s, device ID ceiling: %d", db_file, db_get_batch_limit(), DB_RETENTION_PERIOD, DB_DEVICE_MAX_CEILING);
+
+	/* Step 6: Load historical data from disk */
 	if (load_devices_from_db(ctx) != DB_SUCCESS) {
 		LOG_ERR("Init Error: Failed to populate data from database records");
 		goto error_cleanup;
 	}
 
-	return ctx; // All operations succeeded!
+	return ctx; /* All operations succeeded! */
 
 error_cleanup:
-	// Centered Clean-Up Block: Safely handles partial allocations using your existing db_close
+	/* Centered Clean-Up Block: Safely handles partial allocations using existing db_close */
 	db_close(ctx);
-	return NULL; // Tell main() that initialization completely failed
+	return NULL; /* Tell main() that initialization completely failed */
 }
 
 db_status_t
@@ -103,8 +104,7 @@ db_register_device_if_new(struct db_context *ctx, int device_id) {
 
 	sqlite3_bind_int(ctx->insert_device_stmt, 1, device_id);
 	sqlite3_bind_text(ctx->insert_device_stmt, 2, assigned_room, -1, SQLITE_STATIC);
-
-	sqlite3_step(ctx->insert_device_stmt);
+	check_rc(sqlite3_step(ctx->insert_device_stmt), "Inserting new device", ctx);
 	sqlite3_reset(ctx->insert_device_stmt);
 
 	struct device d;
@@ -124,7 +124,7 @@ db_write_log_batch(struct db_context *ctx, const struct climate_log *log) {
 	sqlite3_bind_int64(ctx->insert_log_stmt, 4, log->timestamp);
 	sqlite3_bind_int(ctx->insert_log_stmt, 5, log->sensor_failed);
 
-	sqlite3_step(ctx->insert_log_stmt);
+	check_rc(sqlite3_step(ctx->insert_log_stmt), "Inserting climate log", ctx);
 	sqlite3_reset(ctx->insert_log_stmt);
 }
 
@@ -132,10 +132,6 @@ void
 db_purge_old_logs(struct db_context *ctx) {
 	const char *sql = "DELETE FROM climate_logs WHERE timestamp < unixepoch('now', '" DB_RETENTION_PERIOD "');";
 	check_rc(sqlite3_exec(ctx->handle, sql, NULL, NULL, NULL), "Purging logs", ctx);
-	int r = sqlite3_changes(ctx->handle);
-	if (r) {
-		LOG_INFO("Purging Climate Logs...%d-row deleted", r);
-	}
 }
 
 void
@@ -169,15 +165,6 @@ db_get_device_loc(struct db_context *ctx, const char **ret_loc, int id) {
 
 	*ret_loc = ctx->devices[id].location;
 	return DB_SUCCESS;
-}
-
-int
-climate_log_serialize(struct db_context *ctx, const struct climate_log *log, char *dest_buf, int size) {
-	int id = log->device_id;
-	char *loc = ctx->devices[id].location;
-	const char *status = log->sensor_failed ? "Bad" : "Good";
-	return snprintf(dest_buf, size, "dev=%02d loc=%-6s temp=%4.1fC humid=%4.1f%% status=%s",
-                    id, loc, log->temp, log->humid, status);
 }
 
 const char *
@@ -227,10 +214,10 @@ expand_device_arr(struct db_context *ctx, int target_idx) {
 
 	struct device *new_all = realloc(ctx->devices, sizeof(*ctx->devices) * (new_size + 1));
 	if (!new_all) {
-		LOG_ERR("Can NOT re-allocate devices array");
-		db_fatal_panic(ctx, "Exit immediately");
+		db_fatal_panic(ctx, "Can NOT re-allocate memory, exit immediately");
 	}
 
+	/* Set all bytes to 0 (for device ID existence check) */
 	memset(new_all + ctx->device_max + 1, 0, sizeof(*new_all) * (new_size - ctx->device_max));
 	ctx->device_max = new_size;
 	ctx->devices = new_all;
@@ -241,7 +228,6 @@ expand_device_arr(struct db_context *ctx, int target_idx) {
 static db_status_t
 ensure_device_capacity(struct db_context *ctx, int id) {
 	if (is_id_out_of_ceiling(id)) {
-		LOG_ERR("Invalid device ID (%d), valid range %d..%d", id, 1, DB_DEVICE_MAX_CEILING);
 		return DB_ERR_ID_EXCEEDS_CEILING;
 	}
 
@@ -268,18 +254,20 @@ load_devices_from_db(struct db_context *ctx) {
 		if (stt == DB_ERR_ID_EXCEEDS_CEILING) {
 			if (DB_EXIT_ON_DB_INVALID_INDEX) {
 				sqlite3_finalize(select_stmt);
-				return stt;
+				return DB_ERR_ID_EXCEEDS_CEILING;
 			}
 
-			LOG_INFO("Skipping divice (%d)", dev.hardware_id);
+			LOG_WARN("Device ID (%d) in database exceeds ceiling (%d)", dev.hardware_id, DB_DEVICE_MAX_CEILING);
 			skip_count++;
 			continue; /* Warning and skip this naughty ID */
 		}
 
-		ctx->devices[dev.hardware_id] = dev; /* Use device ID as its index in devices array */
-		ctx->device_count++;
+		if (is_new_device(ctx, dev.hardware_id)) {
+			ctx->devices[dev.hardware_id] = dev; /* Use device ID as its index in devices array */
+			ctx->device_count++;
+		}
 	}
-	LOG_INFO("%d-device memory loaded succussfully, %d-device skipped", ctx->device_count, skip_count);
+	LOG_INFO("%d-row loaded to memory successfully (%d total in database, %d skipped due to ceiling)", ctx->device_count, ctx->device_count + skip_count, skip_count);
 	sqlite3_finalize(select_stmt);
 	return DB_SUCCESS;
 }
@@ -289,17 +277,17 @@ check_rc(int rc, const char *msg, struct db_context *ctx) {
 	if (rc != SQLITE_OK && rc != SQLITE_DONE && rc != SQLITE_ROW) {
 		LOG_ERR("CRITICAL SQLite Failure (%s): %s", msg, sqlite3_errmsg(ctx->handle));
 
-		// Centralized emergency rollback and closure sequence
+		/* Centralized emergency rollback and closure sequence */
 		sqlite3_exec(ctx->handle, "ROLLBACK;", NULL, NULL, NULL);
 		db_close(ctx);
 
-		exit(EXIT_FAILURE); // Now it's safe to exit since memory and files are closed
+		exit(EXIT_FAILURE); /* Now it's safe to exit since memory and files are closed */
 	}
 }
 
 static void
 db_fatal_panic(struct db_context *ctx, const char *mssg) {
-	LOG_ERR("FATAL ENGINE COLLASPE: %s", mssg);
+	LOG_ERR("FATAL ENGINE COLLAPSE: %s", mssg);
 
 	if (ctx && ctx->handle) {
 		sqlite3_exec(ctx->handle, "ROLLBACK;", NULL, NULL, NULL);

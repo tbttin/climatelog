@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <unistd.h>
 #include <time.h>
 #include "sensor.h"
 #include "db.h"
@@ -12,9 +11,9 @@ static void handle_shutdown(int sig) { (void)sig; keep_running = 0; }
 
 int
 main(void) {
-	/* setlinebuf(stdout); */
+	setvbuf(stdout, NULL, _IOLBF, 0); /* Use linebufered instead of systemd blockbuferd (with journald background pipe) */
 
-	struct sigaction sa = { .sa_handler = handle_shutdown };
+	struct sigaction sa = { .sa_handler = handle_shutdown }; /* It's your last moment, just break the infinite loop and clean up */
 	if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
 		LOG_ERR("Can NOT register system signal handler");
 		return EXIT_FAILURE;
@@ -44,18 +43,18 @@ main(void) {
 			continue;
 		} else if (rs == DB_SUCCESS) {
 			db_get_device_loc(db, &dev_loc, log.device_id);
-			LOG_INFO("New device regisdered (id=%d dev_loc=%s)", log.device_id, dev_loc);
+			LOG_INFO("New device registered (id=%d dev_loc=%s)", log.device_id, dev_loc);
 		}
 
 		if (log.sensor_failed) {
 			db_get_device_loc(db, &dev_loc, log.device_id);
 			LOG_WARN("Sensor fault: dev=%02d dev_loc=%-6s temp=%4.1fC humid=%4.1f%%", log.device_id, dev_loc, log.temp, log.humid);
 		}
+
 		db_write_log_batch(db, &log);
 
 		if (++batch_count >= db_get_batch_limit()) {
 			if (in_transaction) {
-				LOG_INFO("End transaction, start insertion - executing a %d-row flush to disk...", batch_count);
 				db_end_transaction(db);
 				in_transaction = false;
 			}
@@ -64,18 +63,20 @@ main(void) {
 
 			batch_count = 0;
 		}
+
 		struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
 		nanosleep(&ts, NULL);
 	}
 
+	/* Finish leftover jobs */
 	if (batch_count > 0 && in_transaction) {
 		db_end_transaction(db);
-		LOG_INFO("Terminated on signal. %d-device pack flushed to the disk", batch_count);
+		LOG_INFO("Terminating on signal. %d-row batch flushed to the disk", batch_count);
 	} else if (in_transaction) {
 		db_rollback(db);
 	}
 
 	db_close(db);
-	LOG_INFO("Clean exit complete");
+	LOG_INFO("Clean exit completed");
 	return EXIT_SUCCESS;
 }

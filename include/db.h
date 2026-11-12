@@ -33,7 +33,6 @@ void db_close(struct db_context *ctx);
 /* Database utilities */
 int db_get_batch_limit();
 db_status_t db_get_device_loc(struct db_context *ctx, const char **res_loc, int idx);
-int climate_log_serialize(struct db_context *ctx, const struct climate_log *log, char *dest, int size);
 const char * db_strerror(db_status_t stt);
 
 #endif
