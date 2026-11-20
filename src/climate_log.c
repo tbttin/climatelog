@@ -38,7 +38,7 @@ int parse_positive_int(const char *str, int *num) {
 	errno = 0;
 
 	l_num = strtol(str, &endptr, 10);
-	if (*endptr != '\0' || endptr == str || l_num < 0 || l_num < INT_MIN || l_num > INT_MAX || errno) {
+	if (*endptr != '\0' || endptr == str || l_num <= 0 || l_num < INT_MIN || l_num > INT_MAX || errno) {
 		return DB_ERR;
 	}
 

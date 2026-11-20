@@ -1,6 +1,16 @@
+#include <stdbool.h>
 #include "db_internal.h"
 #include "cli.h"
 #include "log.h"
+
+struct climate_data {
+	double temp;
+	double humid;
+	time_t timestamp;
+	char *location;
+	int device_id;
+	bool sensor_failed;
+};
 
 static void cli_print_data(struct climate_data);
 
@@ -23,7 +33,7 @@ db_status_t db_cli_tail(struct db_context *ctx, const struct cli_args *args) {
 	}
 
 	if (status != SQLITE_DONE) {
-		db_check_sqlite_rc(status, ctx->handle);
+		status = db_check_sqlite_rc(status, ctx->handle);
 		sqlite3_finalize(sl_stmt);
 		return status;
 	}
