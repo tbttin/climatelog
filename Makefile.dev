@@ -2,7 +2,7 @@
 
 CPPFLAGS += -DCLIMATELOG_DB_FILE=\"./climatelog.db\"
 CFLAGS += -Wall -Wextra -Wshadow -Wmissing-declarations -Wmissing-prototypes -g -Og -fsanitize=address,undefined
-LDFLAGS += -fsanitize=address,undefined -flto
+LDFLAGS += -fsanitize=address,undefined
 OBJDIR = dev/obj
 TARGET = dev/climatelog
 

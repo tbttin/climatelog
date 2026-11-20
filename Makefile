@@ -25,11 +25,6 @@ $(OBJDIR):
 	@mkdir -p $@
 
 -include $(DEPS)
-# $(OBJDIR)/climate_log.o: include/sensor.h include/db.h include/log.h
-# $(OBJDIR)/db.o: include/db.h include/sensor.h include/config.h include/log.h src/db_internal.h
-# $(OBJDIR)/cli.o: include/cli.h src/db_internal.h
-# $(OBJDIR)/db_internal.o: src/db_internal.h
-# $(OBJDIR)/sensor.o: include/sensor.h include/config.h
 
 .PHONY: clean install uninstall
 
