@@ -5,7 +5,7 @@ DBDIR = /var/lib/climatelog
 SYSDDIR = /etc/systemd/system
 
 CC = gcc
-CPPFLAGS += -Iinclude
+CPPFLAGS += -Iinclude -MMD -MP
 CFLAGS ?= -O2
 LDLIBS += -lm -lsqlite3
 
@@ -13,9 +13,10 @@ TARGET ?= climatelog
 OBJDIR ?= obj
 SRCS = $(wildcard src/*.c)
 OBJS = $(patsubst src/%.c, $(OBJDIR)/%.o, $(SRCS))
+DEPS = $(OBJS:.o=.d)
 
 $(TARGET): $(OBJS)
-	$(CC) $^ -o $@ $(LDLIBS)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
@@ -23,9 +24,12 @@ $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 $(OBJDIR):
 	@mkdir -p $@
 
-$(OBJDIR)/climate_log.o: include/sensor.h include/db.h
-$(OBJDIR)/sensor.o: include/sensor.h include/config.h
-$(OBJDIR)/db.o: include/db.h include/sensor.h include/config.h
+-include $(DEPS)
+# $(OBJDIR)/climate_log.o: include/sensor.h include/db.h include/log.h
+# $(OBJDIR)/db.o: include/db.h include/sensor.h include/config.h include/log.h src/db_internal.h
+# $(OBJDIR)/cli.o: include/cli.h src/db_internal.h
+# $(OBJDIR)/db_internal.o: src/db_internal.h
+# $(OBJDIR)/sensor.o: include/sensor.h include/config.h
 
 .PHONY: clean install uninstall
 

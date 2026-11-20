@@ -3,36 +3,32 @@
 
 #include "sensor.h"
 
-#define LOG_ERR(fmt, ...)  fprintf(stderr, "<3>[%s:%d] " fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...) fprintf(stderr, "<4>" fmt "\n", ##__VA_ARGS__)
-#define LOG_INFO(fmt, ...) fprintf(stdout, "<6>" fmt "\n", ##__VA_ARGS__)
+typedef enum db_mode {
+	DB_MODE_CLI = 0,
+	DB_MODE_DAEMON,
+} db_mode_t;
 
-typedef enum {
+typedef enum db_status {
 	DB_SUCCESS = 0,
 	DB_ID_ALREADY_EXISTS,
 
 	DB_ERR,
+	DB_ERR_NOMEM,
 	DB_ERR_ID_OUT_OF_BOUNDS,
 	DB_ERR_ID_EXCEEDS_CEILING,
+	DB_ERR_BUSY,
+	DB_ERR_NOT_FOUND,
+	DB_ERR_PERM,
 
 	DB_SAFE_STATUS_RANGE,
 } db_status_t;
 
 struct db_context;
 
-/* Database core functions */
-struct db_context* db_init();
-db_status_t db_register_device_if_new(struct db_context *ctx, int device_id);
-void db_write_log_batch(struct db_context *ctx, const struct climate_log *log);
-void db_purge_old_logs(struct db_context *ctx);
-void db_begin_transaction(struct db_context *ctx);
-void db_end_transaction(struct db_context *ctx);
-void db_rollback(struct db_context *ctx);
+db_status_t db_init(struct db_context **out_ctx, db_mode_t mode);
+db_status_t db_flush(struct db_context *ctx);
+db_status_t db_ingest_log(struct db_context *ctx, const struct climate_log *log);
+const char *db_strstt(db_status_t s);
 void db_close(struct db_context *ctx);
 
-/* Database utilities */
-int db_get_batch_limit();
-db_status_t db_get_device_loc(struct db_context *ctx, const char **res_loc, int idx);
-const char * db_strerror(db_status_t stt);
-
-#endif
+#endif /* DB_H_INCLUDED */
