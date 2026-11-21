@@ -5,24 +5,27 @@
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include "log.h"
 #include "db.h"
 #include "cli.h"
 
-typedef db_status_t (*cli_fn)(struct db_context *, const struct cli_args *);
+#define MAX_CLI_JOBS 2
+
+bool verbose = false;
+static volatile sig_atomic_t keep_running = 1;
 
 struct cli_job {
-	cli_fn handler;
+	db_status_t (*handler)(struct db_context *, const struct cli_args *);
 	struct cli_args args;
 };
 
-static volatile sig_atomic_t keep_running = 1;
-
 static void handle_signal(int sig) { (void)sig; keep_running = 0; }
 static void setup_signals();
-static int parse_positive_int(const char *str, int *num);
-static int handle_cli(int argc, char *argv[]);
-static int handle_daemon();
+static db_status_t parse_positive_int(const char *str, int *num);
+static db_status_t parse_cli(int argc, char *argv[], struct cli_job jobs[MAX_CLI_JOBS + 1]);
+static db_status_t run_cli(int argc, char *argv[], db_mode_t *mode);
+static db_status_t handle_daemon();
 
 void setup_signals() {
 	struct sigaction sa = { .sa_handler = handle_signal }; /* It's your last moment, just break the infinite loop and clean up */
@@ -32,46 +35,62 @@ void setup_signals() {
 	}
 }
 
-int parse_positive_int(const char *str, int *num) {
+db_status_t parse_positive_int(const char *str, int *num) {
 	long l_num;
 	char *endptr = NULL;
 	errno = 0;
 
 	l_num = strtol(str, &endptr, 10);
-	if (*endptr != '\0' || endptr == str || l_num <= 0 || l_num < INT_MIN || l_num > INT_MAX || errno) {
+	if (*endptr != '\0' || endptr == str || l_num < 1 || l_num > INT_MAX || errno) {
 		return DB_ERR;
 	}
 
 	*num = (int)l_num;
-	return EXIT_SUCCESS;
+	return DB_SUCCESS;
 }
 
-int handle_cli(int argc, char *argv[]) {
-	struct cli_job cli_jobs[argc];
+db_status_t parse_cli(int argc, char *argv[], struct cli_job jobs[static MAX_CLI_JOBS + 1]) {
 	int job_count = 0;
-
 	int opt;
-	while ((opt = getopt(argc, argv, "st:")) != -1) {
+	uint32_t seen_opts_m = 0;
+	while ((opt = getopt(argc, argv, "vst:h")) != -1) {
+		if (opt >= 'a' && opt <= 'z') {
+			uint32_t opt_bit = 1U << (opt - 'a');
+			if (seen_opts_m & opt_bit) {
+				LOG_ERR("Duplicate option: \"-%c\"", opt);
+				return DB_ERR;
+			}
+			seen_opts_m |= opt_bit;
+		}
+
 		switch (opt) {
 			case 's':
-				cli_jobs[job_count++] = (struct cli_job){ .handler = db_cli_print_status };
+				jobs[job_count++].handler = db_cli_print_status;
 				break;
-			case 't':
+			case 't': {
 				int num;
+				db_status_t status;
 
-				if (parse_positive_int(optarg, &num)) {
+				if ((status = parse_positive_int(optarg, &num)) != DB_SUCCESS) {
 					LOG_ERR("Option -t have an invalid argument \"%s\". It must be a positive number", optarg);
-					return DB_ERR;
+					return status;
 				}
 
-				cli_jobs[job_count++] = (struct cli_job){ .handler = db_cli_tail, .args = { num } };
+				jobs[job_count++] = (struct cli_job){ .handler = db_cli_tail, .args = { num } };
 				break;
+			}
+			case 'v':
+				verbose = true;
+				break;
+			case 'h':
 			default:
-				LOG_ERR("Usage: %s [-s] [-t <num>]\n"
-					"-s	Print short status.\n"
-					"-t	Print last <num> recent records."
+				LOG_ERR("Usage: %s [-s] [-t <num>] [-v] [-h]\n"
+					"-s	Print short status\n"
+					"-t	Print last <num> recent records\n"
+					"-v	Print more output\n"
+					"-h	Print usage"
 					, argv[0]);
-					return DB_ERR;
+				return DB_ERR;
 		}
 	}
 
@@ -80,17 +99,26 @@ int handle_cli(int argc, char *argv[]) {
 		return DB_ERR;
 	}
 
-	struct db_context *pdb = NULL;
-	if (job_count) {
-		db_status_t status;
-		if ((status = db_init(&pdb, DB_MODE_CLI)) != DB_SUCCESS) {
-			LOG_ERR("Error: %s. Failed to init database mode %d", db_strstt(status), DB_MODE_CLI);
+	return DB_SUCCESS;
+}
+
+db_status_t run_cli(int argc, char *argv[], db_mode_t *mode) {
+	struct cli_job jobs[MAX_CLI_JOBS + 1] = { 0 };
+
+	db_status_t status = parse_cli(argc, argv, jobs);
+	if (status != DB_SUCCESS) { return status; }
+
+	if (jobs[0].handler != NULL) {
+		*mode = DB_MODE_CLI;
+		struct db_context *pdb = NULL;
+		if ((status = db_init(&pdb, *mode)) != DB_SUCCESS) {
+			LOG_ERR("Error: %s. Failed to init database mode %d", db_strstt(status), *mode);
 			db_close(pdb);
 			return status;
 		}
 
-		for (int i = 0; i < job_count; i++) {
-			if ((status = cli_jobs[i].handler(pdb, &cli_jobs[i].args)) != DB_SUCCESS) {
+		for (int i = 0; jobs[i].handler != NULL; i++) {
+			if ((status = jobs[i].handler(pdb, &jobs[i].args)) != DB_SUCCESS) {
 				db_close(pdb);
 				return status;
 			}
@@ -102,7 +130,7 @@ int handle_cli(int argc, char *argv[]) {
 	return DB_SUCCESS;
 }
 
-int handle_daemon() {
+db_status_t handle_daemon() {
 	setvbuf(stdout, NULL, _IOLBF, 0); /* Use linebufered instead of systemd blockbuferd (with journald background pipe) */
 	srand(time(NULL));
 
@@ -118,7 +146,10 @@ int handle_daemon() {
 		struct climate_log log;
 		gen_climate_log(&log);
 
-		if ((status = db_ingest_log(pdb, &log)) != DB_SUCCESS) { return status; }
+		if ((status = db_ingest_log(pdb, &log)) != DB_SUCCESS) {
+			db_close(pdb);
+			return status;
+		}
 
 		struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
 		nanosleep(&ts, NULL);
@@ -131,10 +162,14 @@ int handle_daemon() {
 }
 
 int main(int argc, char *argv[]) {
+	db_mode_t mode = DB_MODE_DAEMON;
+
+	if (run_cli(argc, argv, &mode) != DB_SUCCESS) { return EXIT_FAILURE; }
+	if (mode == DB_MODE_CLI) { return EXIT_SUCCESS; }
+
 	setup_signals();
+	if (handle_daemon() != DB_SUCCESS) { return EXIT_FAILURE; }
 
-	db_status_t status = (argc > 1) ? handle_cli(argc, argv) : handle_daemon();
-
-	return (status == DB_SUCCESS) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return EXIT_SUCCESS;
 }
 
