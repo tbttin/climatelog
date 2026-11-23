@@ -8,7 +8,13 @@ TARGET = dev/climatelog
 
 include Makefile
 
-HDRS = $(wildcard include/*.h src/*.h)
+TEST_DIR = dev/tests
+TEST_SRCS = $(wildcard tests/test_*.c)
+TEST_OBJS = $(patsubst tests/%.c, $(TEST_DIR)/%.o, $(TEST_SRCS))
+TEST_BINS = $(patsubst tests/%.c, $(TEST_DIR)/%, $(TEST_SRCS))
+APP_OBJS = $(filter-out $(OBJDIR)/climate_log.o, $(OBJS))
+
+HDRS = $(wildcard include/*.h src/*.h tests/*.c)
 
 # Order-only dependencies
 $(TARGET): | dev tags
@@ -19,10 +25,28 @@ tags: $(SRCS) $(HDRS)
 dev:
 	@mkdir -p $@
 
-.PHONY: run
+$(TEST_DIR)/%.o: tests/%.c | $(TEST_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(TEST_DIR)/%: $(TEST_DIR)/%.o $(APP_OBJS)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+$(TEST_DIR):
+	@mkdir -p $@
+
+-include $(TEST_OBJS:.o=.d)
+
+.PHONY: run test
 
 run: $(TARGET)
 	@./$(TARGET)
+
+test: $(TEST_BINS)
+	@for t in $(TEST_BINS); do \
+		echo "====== Running $$t ======"; \
+		./$$t || exit 1; \
+	done
+	@echo 'All unit tests passed!'
 
 # Double colons rule, append the target's command.
 clean::
