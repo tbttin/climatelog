@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "db_internal.h"
-#include "log.h"
+#include "console_log.h"
 
 static bool is_id_out_of_ceilings(int id);
 static bool is_new_device(struct db_context *ctx, int device_id);

@@ -1,5 +1,5 @@
 #include "db_internal.h"
-#include "log.h"
+#include "console_log.h"
 
 bool is_id_out_of_bounds(struct db_context *ctx, int id) {
 	return (id >= (ctx->device_max + 1) || id < 1);

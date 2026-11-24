@@ -1,7 +1,7 @@
 #include <stdbool.h>
 #include "db_internal.h"
 #include "cli.h"
-#include "log.h"
+#include "console_log.h"
 
 struct climate_data {
 	double temp;

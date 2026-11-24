@@ -6,7 +6,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
-#include "log.h"
+#include "console_log.h"
 #include "db.h"
 #include "cli.h"
 
