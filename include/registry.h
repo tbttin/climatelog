@@ -3,29 +3,36 @@
 
 #include <string.h>
 #include <stdint.h>
+#include "db.h"
 
-#define REG_STR_MAX_LEN 64
-#define REG_POOL_MAX_SIZE 1024
+typedef enum reg_status {
+	REG_SUCCESS = 0,
+	REG_ERR,
+	REG_ERR_NOMEM,
+	REG_ERR_OUT_OF_BYTES_LIMIT,
+	REG_ERR_INVALID_ARG,
+	REG_ERR_ID_OUT_OF_RANGE,
+	REG_ERR_POOL_FULL,
+	REG_ERR_NOT_FOUND,
+} reg_status_t;
 
-struct entity_registry {
-	int *device_room;
-	int device_cap;
-	int device_count;
+struct entity_registry;
 
-	uint32_t *room_offsets;
-	int room_cap;
-	int room_count;
+typedef uint8_t reg_id_t;
+#define REG_ID_MAX UINT8_MAX
 
-	char *str_pool;
-	size_t pool_used;
-	size_t pool_cap;
-};
+type uint16_t reg_offset_t;
+#define REG_OFFSET_MAX UINT16_MAX
 
-int reg_init(struct entity_registry *reg);
-int reg_intern(struct entity_registry *reg, char *str, size_t *offset);
-const char * reg_get(struct entity_registry *reg, size_t offset);
-int reg_clear(struct entity_registry *reg);
-int reg_free(struct entity_registry *reg);
+reg_status_t reg_create(struct entity_registry **out_reg, reg_id_t max_devices, reg_id_t max_rooms);
+void reg_clear(struct entity_registry *reg);
+void reg_destroy(struct entity_registry *reg);
+
+reg_status_t reg_set_room(struct entity_registry *reg, reg_it_t id, const char *name);
+reg_status_t reg_get_room_name(struct entity_registry *reg, reg_it_t room_id, char *out_name, size_t len);
+
+reg_status_t reg_set_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t room_id);
+reg_status_t reg_get_device_room(struct entity_registry *reg, reg_id_t device_id, reg_id_t room_id, reg_id_t *out_room);
 
 #endif /* REGISTRY_H_INCLUDED */
 
