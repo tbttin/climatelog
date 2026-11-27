@@ -7,6 +7,12 @@
 	if (_s != REG_SUCCESS) return _s; \
 } while (0)
 
+#define buf_set(b, id, val) \
+	(((id) < 1) ? REG_ERR_INVALID_ARG : dyn_buf_set_at((b), (size_t)(id), &(val), sizeof((val))))
+
+#define buf_get(b, id, out) \
+	(((id) < 1 || (out) == NULL) ? REG_ERR_INVALID_ARG : dyn_buf_get_at((b), (size_t)(id), (out), sizeof(*(out))))
+
 struct dyn_buf {
 	uint8_t *data;
 	size_t cap_bytes;
@@ -17,8 +23,8 @@ struct entity_registry {
 	struct dyn_buf devices;
 	int dev_count;
 
-	struct dyn_buf rooms;
-	int room_count;
+	struct dyn_buf locs;
+	int loc_count;
 
 	struct dyn_buf str_pool;
 	reg_offset_t pool_used;
@@ -28,39 +34,31 @@ static const int REG_DYN_BUF_INIT_BYTES = 1024;
 static const int REG_STR_MAX_LEN = 64;
 static const int REG_POOL_MAX_SIZE = 4096;
 
-/* TIER 1: RAW MEMORY LAYER (Knows only about bytes, offsets, and bounds) */
 static reg_status_t dyn_buf_init(struct dyn_buf *b, size_t max_bytes);
 static void dyn_buf_clear(struct dyn_buf *b);
 static void dyn_buf_free(struct dyn_buf *b);
 static reg_status_t dyn_buf_expand(struct dyn_buf *b, size_t bytes_needed);
 static reg_status_t dyn_buf_write(struct dyn_buf *b, size_t byte_offset, const void *src, size_t nbytes);
-static reg_status_t dyn_buf_read(struct dyn_buf *b, size_t byte_offset, size_t nbytes, void *dest);
+static reg_status_t dyn_buf_read(struct dyn_buf *b, size_t byte_offset, void *dest, size_t nbytes);
 
 static reg_status_t dyn_buf_set_at(struct dyn_buf *b, size_t index, const void *elem, size_t elem_size);
-static reg_status_t dyn_buf_get_at(struct dyn_buf *b, size_t index, const void *out_elem, size_t elem_size);
-
-/* TIER 2: TYPED ENTITY ACCESSORS (Translates reg_id_t -> byte offsets) */
-static reg_status_t dev_buf_set(struct dyn_buf *b, reg_id_t dev_id, reg_id_t room_id);
-static reg_status_t dev_buf_get(struct dyn_buf *b, reg_id_t dev_id, reg_id_t *out_room_id);
-static reg_status_t room_buf_set(struct dyn_buf *b, reg_id_t room_id, reg_offset_t str_offset);
-static reg_status_t room_buf_get(struct dyn_buf *b, reg_id_t room_id, reg_offset_t *out_str_offset);
+static reg_status_t dyn_buf_get_at(struct dyn_buf *b, size_t index, void *out_elem, size_t elem_size);
 
 static reg_status_t reg_intern(struct entity_registry *reg, const char *str, reg_offset_t *out_offset);
 
-reg_status_t reg_create(struct entity_registry **out_reg, int max_devices, int max_rooms) {
-	if (max_devices < 1 || max_rooms < 1) { return REG_ERR_INVALID_ARG; }
+reg_status_t reg_create(struct entity_registry **out_reg, reg_id_t max_devices, reg_id_t max_locs) {
+	if (!out_reg || max_devices < 1 || max_locs < 1) { return REG_ERR_INVALID_ARG; }
 
 	struct entity_registry *reg = calloc(1, sizeof(*reg));
 	if (!reg) { return REG_ERR_NOMEM; }
 
-	REG_TRY(dyn_buf_init(&reg->devices, max_devices));
+	REG_TRY(dyn_buf_init(&reg->devices, max_devices * sizeof(max_devices)));
 	reg->dev_count = 0;
 
-	REG_TRY(dyn_buf_init(&reg->rooms, max_rooms));
-	reg->room_count = 0;
+	REG_TRY(dyn_buf_init(&reg->locs, max_locs * sizeof(max_locs)));
+	reg->loc_count = 0;
 
 	REG_TRY(dyn_buf_init(&reg->str_pool, REG_POOL_MAX_SIZE));
-	str_buf_set(&reg->str_pool, 0, "\0");
 	reg->pool_used = 1;
 
 	*out_reg = reg;
@@ -70,59 +68,75 @@ reg_status_t reg_create(struct entity_registry **out_reg, int max_devices, int m
 void reg_clear(struct entity_registry *reg) {
 	if (!reg) return;
 	dyn_buf_clear(&reg->devices);
-	dyn_buf_clear(&reg->rooms);
+	dyn_buf_clear(&reg->locs);
 	dyn_buf_clear(&reg->str_pool);
-	reg->dev_count = reg->room_count = 0;
+	reg->dev_count = reg->loc_count = 0;
 	reg->pool_used = 1;
 }
 
 void reg_destroy(struct entity_registry *reg) {
 	if (!reg) return;
 	dyn_buf_free(&reg->devices);
-	dyn_buf_free(&reg->rooms);
+	dyn_buf_free(&reg->locs);
 	dyn_buf_free(&reg->str_pool);
 	*reg = (struct entity_registry){ 0 };
+	free(reg);
 }
 
-reg_status_t reg_set_room(struct entity_registry *reg, reg_id_t id, const char *name) {
+reg_status_t reg_set_loc(struct entity_registry *reg, reg_id_t id, const char *name) {
 	if (!reg || !id) { return REG_ERR_INVALID_ARG; }
 
-	struct dyn_buf *rooms = &reg->rooms;
+	struct dyn_buf *locs = &reg->locs;
 	reg_offset_t offset = 0;
 
-	REG_TRY(room_buf_get(rooms, id, &offset));
+	REG_TRY(buf_get(locs, id, &offset));
 
-	if (!offset) { /* New room ID */
+	if (!offset) { /* New loc ID */
 		REG_TRY(reg_intern(reg, name, &offset));
-		REG_TRY(room_buf_set(rooms, id, offset));
-		reg->room_count++;
+		REG_TRY(buf_set(locs, id, offset));
+		reg->loc_count++;
 	}
 
 	return REG_SUCCESS;
 }
 
-reg_status_t reg_get_room_name(struct entity_registry *reg, reg_id_t id, char *out_name, size_t len) {
+reg_status_t reg_get_loc(struct entity_registry *reg, reg_id_t id, char *out_name, size_t len) {
 	if (!reg || !id || !out_name) { return REG_ERR_INVALID_ARG; }
 
-	struct dyn_buf *room = &reg->rooms;
+	struct dyn_buf *locs = &reg->locs;
 	reg_offset_t offset = 0;
 
-	REG_TRY(room_buf_get(room, id, &offset));
+	REG_TRY(buf_get(locs, id, &offset));
 	if (!offset) { return REG_ERR_NOT_FOUND; }
 
-	const char * room_name = (const char *)(rooms->str_pool.data + offset);
-	size_t needed = strlen(room_name) + 1;
+	const char *loc_name = (const char *)(reg->str_pool.data + offset);
+	size_t needed = strlen(loc_name) + 1;
 	if (needed > len) { return REG_ERR_INVALID_ARG; }
-	memcpy(out_name, room_name, needed);
+	memcpy(out_name, loc_name, needed);
 
 	return REG_SUCCESS;
 }
 
-reg_status_t reg_set_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t room_id) {
-	if (!reg || !device_id || !room_id) { return REG_ERR_INVALID_ARG; }
+reg_status_t reg_set_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t loc_id) {
+	if (!reg || !device_id || !loc_id) { return REG_ERR_INVALID_ARG; }
 
-	ZZ
+	struct dyn_buf *b = &reg->devices;
 
+	REG_TRY(buf_set(b, device_id, loc_id));
+
+	return REG_SUCCESS;
+}
+
+reg_status_t reg_get_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t *out_loc) {
+	if (!reg || !device_id || !out_loc) { return REG_ERR_INVALID_ARG; }
+
+	struct dyn_buf *b = &reg->devices;
+	reg_id_t offset = 0;
+
+	REG_TRY(buf_get(b, device_id, &offset));
+	if (!offset) { return REG_ERR_NOT_FOUND; }
+
+	*out_loc = offset;
 	return REG_SUCCESS;
 }
 
@@ -135,8 +149,8 @@ reg_status_t dyn_buf_init(struct dyn_buf *b, size_t max_bytes) {
 
 	*b = (struct dyn_buf){
 		.data = data,
-		.cap_bytes = init_bytes
-	  	.max_bytes = max_bytes,
+		.cap_bytes = init_cap,
+	  	.max_bytes = max_bytes
 	};
 
 	return REG_SUCCESS;
@@ -158,14 +172,14 @@ reg_status_t dyn_buf_expand(struct dyn_buf *b, size_t bytes_needed) {
 	if (bytes_needed > b->max_bytes) return REG_ERR_OUT_OF_BYTES_LIMIT;
 	if (bytes_needed <= b->cap_bytes) return REG_SUCCESS;
 
-	size_t new_cap = b->bytes_cap;
+	size_t new_cap = b->cap_bytes;
 	while (new_cap < bytes_needed) { new_cap = (new_cap > SIZE_MAX / 2) ? b->max_bytes : new_cap * 2; }
 	if (new_cap > b->max_bytes) { new_cap = b->max_bytes; }
 
-	char *new_data = realloc(b->data, new_cap);
+	uint8_t *new_data = realloc(b->data, new_cap);
 	if (!new_data) { return REG_ERR_NOMEM; }
 	
-	memset(new_data + b->bytes_cap, 0, new_cap - b-bytes_cap);
+	memset(new_data + b->cap_bytes, 0, new_cap - b->cap_bytes);
 
 	b->data = new_data;
 	b->cap_bytes = new_cap;
@@ -176,15 +190,15 @@ reg_status_t dyn_buf_write(struct dyn_buf *b, size_t byte_offset, const void *sr
 	if (!b || !src) { return REG_ERR_INVALID_ARG; }
 	if (byte_offset + nbytes > b->max_bytes) { return REG_ERR_OUT_OF_BYTES_LIMIT; }
 
-	size_t end_offet = byte_offset + nbytes;
-	if (end_offset > b->cap_bytes) { REG_TRY(dyn_buf_expand(b, end_offet)); }
+	size_t end_offset = byte_offset + nbytes;
+	if (end_offset > b->cap_bytes) { REG_TRY(dyn_buf_expand(b, end_offset)); }
 
 	memcpy(b->data + byte_offset, src, nbytes);
 
 	return REG_SUCCESS;
 }
 
-reg_status_t dyn_buf_read(struct dyn_buf *b, size_t byte_offset, size_t nbytes, void *dest) {
+reg_status_t dyn_buf_read(struct dyn_buf *b, size_t byte_offset, void *dest, size_t nbytes) {
 	if (!b || !nbytes) { return REG_ERR_INVALID_ARG; }
 	if (byte_offset + nbytes > b->cap_bytes) { return REG_ERR_OUT_OF_BYTES_LIMIT; }
 
@@ -195,34 +209,13 @@ reg_status_t dyn_buf_read(struct dyn_buf *b, size_t byte_offset, size_t nbytes, 
 
 reg_status_t dyn_buf_set_at(struct dyn_buf *b, size_t index, const void *elem, size_t elem_size) {
 	if (!b || !elem || !elem_size) { return REG_ERR_INVALID_ARG; }
-	if (index > b->cap_bytes / elem_size) { return REG_ERR_ID_OUT_OF_RANGE; }
 	return dyn_buf_write(b, index * elem_size, elem, elem_size);
 }
 
-reg_status_t dyn_buf_get_at(struct dyn_buf *b, size_t index, const void *out_elem, size_t elem_size) {
+reg_status_t dyn_buf_get_at(struct dyn_buf *b, size_t index, void *out_elem, size_t elem_size) {
 	if (!b || !out_elem || !elem_size) { return REG_ERR_INVALID_ARG; }
 	if (index > b->cap_bytes / elem_size) { return REG_ERR_ID_OUT_OF_RANGE; }
 	return dyn_buf_read(b, index * elem_size, out_elem, elem_size);
-}
-
-reg_status_t dev_buf_set(struct dyn_buf *b, reg_id_t dev_id, reg_id_t room_id) {
-	if (!b || dev_id < 1 || room_id < 1) { return REG_ERR_INVALID_ARG; }
-	return dyn_buf_set_at(b, (size_t)dev_id, &room_id, sizeof(room_id));
-}
-
-reg_status_t dev_buf_get(struct dyn_buf *b, reg_id_t dev_id, reg_id_t *out_room_id) {
-	if (!b || dev_id < 1) { return REG_ERR_INVALID_ARG; }
-	return dyn_buf_get_at(b, (size_t)dev_id, out_room_id, sizeof(*out_room_id));
-}
-
-reg_status_t room_buf_set(struct dyn_buf *b, reg_id_t room_id, reg_offset_t str_offset) {
-	if (!b || room_id < 1) { return REG_ERR_INVALID_ARG; }
-	return dyn_buf_set_at(b, (size_t)room_id, &str_offset, sizeof(str_offset));
-}
-
-reg_status_t room_buf_get(struct dyn_buf *b, reg_id_t room_id, reg_offset_t *out_str_offset) {
-	if (!b || dev_id < 1) { return REG_ERR_INVALID_ARG; }
-	return dyn_buf_get_at(b, (size_t)room_id, out_str_offset, sizeof(*out_str_offset));
 }
 
 reg_status_t reg_intern(struct entity_registry *reg, const char *str, reg_offset_t *out_offset) {
@@ -232,7 +225,7 @@ reg_status_t reg_intern(struct entity_registry *reg, const char *str, reg_offset
 	if (!len || len > REG_STR_MAX_LEN) return REG_ERR_INVALID_ARG;
 
 	struct dyn_buf *str_pool = &reg->str_pool;
-	size_t *pool_used = &reg->pool_used;
+	reg_offset_t *pool_used = &reg->pool_used;
 
 	size_t currsor = 1;
 	while (currsor < *pool_used) {
@@ -248,7 +241,7 @@ reg_status_t reg_intern(struct entity_registry *reg, const char *str, reg_offset
 	}
 
 	size_t write_len = len + 1;
-	if (write_len > REG_OFFSET_MAX - reg->pool_used) { return REG_ERR_POOL_FULL; }
+	if ((reg_offset_t)write_len > REG_OFFSET_MAX - reg->pool_used) { return REG_ERR_POOL_FULL; }
 
 	reg_offset_t new_offset = reg->pool_used;
 	REG_TRY(dyn_buf_write(str_pool, new_offset, str, write_len));

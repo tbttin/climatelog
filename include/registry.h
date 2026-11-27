@@ -16,23 +16,22 @@ typedef enum reg_status {
 	REG_ERR_NOT_FOUND,
 } reg_status_t;
 
-struct entity_registry;
-
-typedef uint8_t reg_id_t;
-#define REG_ID_MAX UINT8_MAX
-
-type uint16_t reg_offset_t;
+typedef uint16_t reg_id_t;
+#define REG_ID_MAX UINT16_MAX
+typedef uint16_t reg_offset_t;
 #define REG_OFFSET_MAX UINT16_MAX
 
-reg_status_t reg_create(struct entity_registry **out_reg, reg_id_t max_devices, reg_id_t max_rooms);
+struct entity_registry;
+
+reg_status_t reg_create(struct entity_registry **out_reg, reg_id_t max_devices, reg_id_t max_locs);
 void reg_clear(struct entity_registry *reg);
 void reg_destroy(struct entity_registry *reg);
 
-reg_status_t reg_set_room(struct entity_registry *reg, reg_it_t id, const char *name);
-reg_status_t reg_get_room_name(struct entity_registry *reg, reg_it_t room_id, char *out_name, size_t len);
+reg_status_t reg_set_loc(struct entity_registry *reg, reg_id_t id, const char *name);
+reg_status_t reg_get_loc(struct entity_registry *reg, reg_id_t loc_id, char *out_name, size_t len);
 
-reg_status_t reg_set_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t room_id);
-reg_status_t reg_get_device_room(struct entity_registry *reg, reg_id_t device_id, reg_id_t room_id, reg_id_t *out_room);
+reg_status_t reg_set_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t loc_id);
+reg_status_t reg_get_device(struct entity_registry *reg, reg_id_t device_id, reg_id_t *out_loc);
 
 #endif /* REGISTRY_H_INCLUDED */
 
